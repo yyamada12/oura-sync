@@ -1,0 +1,21 @@
+[project]
+name = "oura-sync"
+version = "0.1.0"
+description = "Oura Ring のデータを Google Sheets に取り込む"
+requires-python = ">=3.12"
+dependencies = [
+    "requests>=2.32",
+    "gspread>=6.1",
+    "google-auth>=2.35",
+    "python-dotenv>=1.0",
+]
+
+[project.scripts]
+oura-sync = "oura_sync.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["oura_sync"]
