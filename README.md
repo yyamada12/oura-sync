@@ -55,3 +55,9 @@ launchctl load ~/Library/LaunchAgents/app.oura-sync.plist
 - ネストした JSON は `a.b` 列に平坦化、配列 (5 分ごとの HRV など) は JSON 文字列で 1 セルに格納
 - 旧 `tag` エンドポイントは `enhanced_tag` に置き換わっているため対象外
 - Strava は API アプリ作成に Strava 有料サブスクリプションが必須 (2026-06 改定) のため保留
+
+## Privacy Policy / Terms of Service
+
+このアプリケーションは作者本人が個人利用するためのものです。Oura API から取得したデータは
+作者自身が所有する Google スプレッドシートにのみ保存され、第三者に提供・共有することはありません。
+他のユーザーが利用することは想定していません。

@@ -10,7 +10,8 @@ OURA_CLIENT_ID = os.environ.get("OURA_CLIENT_ID", "")
 OURA_CLIENT_SECRET = os.environ.get("OURA_CLIENT_SECRET", "")
 OURA_REDIRECT_URI = os.environ.get("OURA_REDIRECT_URI", "http://localhost:8765/callback")
 OURA_SCOPES = os.environ.get(
-    "OURA_SCOPES", "email personal daily heartrate workout tag session spo2"
+    "OURA_SCOPES",
+    "email personal daily heartrate workout tag session spo2 ring_configuration stress heart_health"
 )
 SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID", "")
 
