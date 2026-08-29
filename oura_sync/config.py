@@ -15,6 +15,11 @@ OURA_SCOPES = os.environ.get(
 )
 SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID", "")
 
+# サービスアカウント鍵の相対パスはプロジェクトルート基準に解決する (launchd 等で cwd が違っても動くように)
+_gac = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+if _gac and not os.path.isabs(_gac):
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = str(ROOT / _gac)
+
 TOKENS_PATH = ROOT / "tokens.json"
 
 AUTHORIZE_URL = "https://cloud.ouraring.com/oauth/authorize"
