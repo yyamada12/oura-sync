@@ -105,3 +105,46 @@ launchctl load ~/Library/LaunchAgents/app.oura-sync.plist
 作者自身が所有する Google スプレッドシートにのみ保存され、第三者に提供・共有することはありません。
 他のユーザーが利用することは想定していません。
 
+## NRC (Apple Health) ラン取り込み API
+
+NRC → Apple Health → iOS ショートカット (無料アプリ「Actions」の Find Workout) → Cloud Run → BigQuery の 0 円構成。
+
+```text
+Nike Run Club → Apple Health → Actions + ショートカット
+  → POST https://nrc-ingest-964507190351.asia-northeast1.run.app/api/runs
+  → BigQuery spherical-depth-263101.running.runs
+```
+
+- コード: `server/` (FastAPI)。GCP プロジェクトは `spherical-depth-263101` (yacropolisy@gmail.com)
+- Cloud Run サービス `nrc-ingest` (asia-northeast1)、SA `nrc-ingest@spherical-depth-263101.iam.gserviceaccount.com`
+- BigQuery: テーブル `running.runs` (started_at 日付パーティション)、分析用ビュー `running.runs_v` (pace 計算済み)
+- 書き込みは MERGE (キー: source + started_at) で冪等。再送で heart_rates が空でも既存時系列は保持
+- **ストリーミング挿入は不使用** (クエリジョブのみ = 無料枠内)
+- 認証: Bearer トークン (`server/.api_token`、git 管理外)。Cloud Run の env `API_TOKEN`
+
+### エンドポイント
+- `GET /health` … 死活確認 (認証不要)。※ `/healthz` は run.app ドメインでは Google Frontend に予約されていて使えない
+- `POST /api/runs` … 取り込み。`started_at` 必須 (ISO8601)。`distance` が 30 未満なら km とみなし m に変換
+- `GET /api/runs?limit=N` … 直近ランの一覧 (runs_v)
+
+### デプロイ
+```
+TOKEN=$(cat server/.api_token)
+gcloud run deploy nrc-ingest --source server \
+  --project spherical-depth-263101 --region asia-northeast1 \
+  --allow-unauthenticated \
+  --service-account nrc-ingest@spherical-depth-263101.iam.gserviceaccount.com \
+  --memory 512Mi --max-instances 2 \
+  --set-env-vars "API_TOKEN=${TOKEN},BQ_PROJECT=spherical-depth-263101,BQ_DATASET=running"
+```
+
+### iOS ショートカット側 (手動セットアップ)
+1. App Store で「Actions」(無料) をインストール
+2. ショートカット作成:
+   - Actions: **Find Workouts** … Type=Running / Sort=Start Date 降順 / Limit=1
+   - (任意) ヘルスケアサンプルを検索 … 心拍数、Workout の開始〜終了で絞り込み
+   - 「テキスト」で JSON 組み立て → 「URLの内容を取得」で POST
+     - URL: `https://nrc-ingest-964507190351.asia-northeast1.run.app/api/runs`
+     - ヘッダー: `Authorization: Bearer <server/.api_token の値>` / `Content-Type: application/json`
+     - ボディ例: `{"started_at":"<開始日時 ISO8601>","ended_at":"<終了日時>","distance":<km>,"active_calories":<kcal>,"heart_rates":[{"time":"...","bpm":132},...]}`
+3. オートメーション: 「Nike Run Club が閉じられたとき」+ 保険で「毎日 23:00」に実行 (冪等なので重複 POST しても安全)
