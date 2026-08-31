@@ -5,3 +5,5 @@ __pycache__/
 *.pyc
 *.egg-info/
 service-account.json
+tokens_gas.json
+secrets/
