@@ -10,7 +10,7 @@ import json
 import logging
 import os
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from dateutil import parser as dateparser
@@ -54,12 +54,16 @@ def _ts(value: Any) -> datetime | None:
         return None
     if isinstance(value, (int, float)):
         return datetime.fromtimestamp(float(value), tz=timezone.utc)
+    # 日本語ロケールの日付 ("2026年8月31日 21:05" 等) を ISO 風に正規化
+    text = re.sub(r"[年月]", "-", str(value))
+    text = re.sub(r"日", " ", text).replace("午前", "AM ").replace("午後", "PM ")
     try:
-        dt = dateparser.parse(str(value))
+        dt = dateparser.parse(text.strip())
     except (ValueError, OverflowError):
         return None
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        # タイムゾーンなしは JST とみなす (Shortcuts のローカル日付対策)
+        dt = dt.replace(tzinfo=timezone(timedelta(hours=9)))
     return dt
 
 
@@ -73,6 +77,8 @@ def _pick(payload: dict, *keys: str) -> Any:
 def normalize(payload: dict) -> dict:
     started_at = _ts(_pick(payload, "started_at", "start", "start_date", "startDate"))
     if started_at is None:
+        logger.warning("started_at missing/unparseable. payload=%s",
+                       json.dumps(payload, ensure_ascii=False, default=str)[:2000])
         raise HTTPException(422, "started_at is required (ISO8601 or unix epoch)")
 
     ended_at = _ts(_pick(payload, "ended_at", "end", "end_date", "endDate"))
