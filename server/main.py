@@ -3,6 +3,12 @@
 iOS ショートカットから POST された Run データを BigQuery
 `spherical-depth-263101.running.runs` に冪等 MERGE で保存する。
 (source, started_at) をキーに、再送時は上書き更新。
+
+受け付ける形式:
+1. 単一: {"started_at": "...", "distance": "8.02 km", ...}
+2. 一括 (Shortcuts のリスト変数): 各フィールドが改行区切りで N 件分
+   {"started_at": "2026/08/30 20:45\n2026/08/29 20:36", "distance": "12,147 m\n7,003 m", ...}
+3. 一括 (配列): [{...}, {...}]
 """
 
 import hmac
@@ -74,12 +80,11 @@ def _pick(payload: dict, *keys: str) -> Any:
     return None
 
 
-def normalize(payload: dict) -> dict:
+def normalize(payload: dict) -> dict | None:
+    """1 件分のペイロードを行データに正規化する。started_at が読めなければ None。"""
     started_at = _ts(_pick(payload, "started_at", "start", "start_date", "startDate"))
     if started_at is None:
-        logger.warning("started_at missing/unparseable. payload=%s",
-                       json.dumps(payload, ensure_ascii=False, default=str)[:2000])
-        raise HTTPException(422, "started_at is required (ISO8601 or unix epoch)")
+        return None
 
     ended_at = _ts(_pick(payload, "ended_at", "end", "end_date", "endDate"))
     duration = _num(_pick(payload, "duration_seconds", "duration"))
@@ -89,7 +94,7 @@ def normalize(payload: dict) -> dict:
         ended_at = datetime.fromtimestamp(started_at.timestamp() + duration, tz=timezone.utc)
 
     distance = _num(_pick(payload, "distance_m", "distance"))
-    # 30km 未満の値は km 単位で送られたとみなす (NRC のランで 30km/日超の m 表記はない)
+    # 30 未満の値は km 単位で送られたとみなす (30km/日超の m 表記はない)
     if distance is not None and distance < 30:
         distance *= 1000
 
@@ -110,8 +115,11 @@ def normalize(payload: dict) -> dict:
         avg_hr = avg_hr if avg_hr is not None else round(sum(bpms) / len(bpms), 1)
         max_hr = max_hr if max_hr is not None else max(bpms)
 
+    source_name = _pick(payload, "source_name", "sourceName", "app", "workout_source")
+
     return {
         "source": str(_pick(payload, "source") or "nrc_apple_health"),
+        "source_name": str(source_name) if source_name is not None else None,
         "started_at": started_at.isoformat(),
         "ended_at": ended_at.isoformat() if ended_at else None,
         "duration_seconds": duration,
@@ -119,28 +127,70 @@ def normalize(payload: dict) -> dict:
         "active_calories": _num(_pick(payload, "active_calories", "calories", "activeCalories")),
         "avg_hr": avg_hr,
         "max_hr": max_hr,
-        "heart_rates": json.dumps(hr_samples),
-        "raw": json.dumps(payload, ensure_ascii=False, default=str),
+        "heart_rates": hr_samples,
+        "raw": payload,
     }
+
+
+# Shortcuts のリスト変数は改行区切りで全件連結されるため、zip して 1 件ずつに分解する
+SPLITTABLE_KEYS = (
+    "started_at", "start", "start_date", "startDate",
+    "ended_at", "end", "end_date", "endDate",
+    "duration_seconds", "duration",
+    "distance_m", "distance",
+    "active_calories", "calories", "activeCalories",
+    "avg_hr", "average_heart_rate", "avgHeartRate",
+    "max_hr", "max_heart_rate", "maxHeartRate",
+    "source_name", "sourceName", "app", "workout_source",
+)
+
+
+def explode(payload: dict) -> list[dict]:
+    started_raw = _pick(payload, "started_at", "start", "start_date", "startDate")
+    if not isinstance(started_raw, str) or "\n" not in started_raw:
+        return [payload]
+
+    columns: dict[str, list[str]] = {}
+    for key in SPLITTABLE_KEYS:
+        if isinstance(payload.get(key), str):
+            columns[key] = [line.strip() for line in payload[key].split("\n")]
+
+    n = len(columns[[k for k in ("started_at", "start", "start_date", "startDate") if k in columns][0]])
+    items = []
+    for i in range(n):
+        item = {k: v for k, v in payload.items() if k not in SPLITTABLE_KEYS}
+        item.pop("heart_rates", None)  # 一括モードではどのランの心拍か特定できないため無視
+        for key, lines in columns.items():
+            if i < len(lines) and lines[i] != "":
+                item[key] = lines[i]
+        items.append(item)
+    return items
 
 
 MERGE_SQL = f"""
 MERGE `{TABLE}` T
 USING (
   SELECT
-    @source AS source,
-    TIMESTAMP(@started_at) AS started_at,
-    TIMESTAMP(@ended_at) AS ended_at,
-    @duration_seconds AS duration_seconds,
-    @distance_m AS distance_m,
-    @active_calories AS active_calories,
-    @avg_hr AS avg_hr,
-    @max_hr AS max_hr,
-    PARSE_JSON(@heart_rates) AS heart_rates,
-    PARSE_JSON(@raw, wide_number_mode=>'round') AS raw
+    JSON_VALUE(r, '$.source') AS source,
+    JSON_VALUE(r, '$.source_name') AS source_name,
+    TIMESTAMP(JSON_VALUE(r, '$.started_at')) AS started_at,
+    TIMESTAMP(JSON_VALUE(r, '$.ended_at')) AS ended_at,
+    SAFE_CAST(JSON_VALUE(r, '$.duration_seconds') AS FLOAT64) AS duration_seconds,
+    SAFE_CAST(JSON_VALUE(r, '$.distance_m') AS FLOAT64) AS distance_m,
+    SAFE_CAST(JSON_VALUE(r, '$.active_calories') AS FLOAT64) AS active_calories,
+    SAFE_CAST(JSON_VALUE(r, '$.avg_hr') AS FLOAT64) AS avg_hr,
+    SAFE_CAST(JSON_VALUE(r, '$.max_hr') AS FLOAT64) AS max_hr,
+    JSON_QUERY(r, '$.heart_rates') AS heart_rates,
+    JSON_QUERY(r, '$.raw') AS raw
+  FROM UNNEST(JSON_QUERY_ARRAY(PARSE_JSON(@rows, wide_number_mode=>'round'))) AS r
+  QUALIFY ROW_NUMBER() OVER (
+    PARTITION BY JSON_VALUE(r, '$.source'), JSON_VALUE(r, '$.started_at')
+    ORDER BY JSON_VALUE(r, '$.started_at')
+  ) = 1
 ) S
 ON T.source = S.source AND T.started_at = S.started_at
 WHEN MATCHED THEN UPDATE SET
+  source_name = COALESCE(S.source_name, T.source_name),
   ended_at = COALESCE(S.ended_at, T.ended_at),
   duration_seconds = COALESCE(S.duration_seconds, T.duration_seconds),
   distance_m = COALESCE(S.distance_m, T.distance_m),
@@ -153,10 +203,10 @@ WHEN MATCHED THEN UPDATE SET
   raw = S.raw,
   ingested_at = CURRENT_TIMESTAMP()
 WHEN NOT MATCHED THEN INSERT
-  (source, started_at, ended_at, duration_seconds, distance_m,
+  (source, source_name, started_at, ended_at, duration_seconds, distance_m,
    active_calories, avg_hr, max_hr, heart_rates, raw, ingested_at)
 VALUES
-  (S.source, S.started_at, S.ended_at, S.duration_seconds, S.distance_m,
+  (S.source, S.source_name, S.started_at, S.ended_at, S.duration_seconds, S.distance_m,
    S.active_calories, S.avg_hr, S.max_hr, S.heart_rates, S.raw, CURRENT_TIMESTAMP())
 """
 
@@ -168,40 +218,47 @@ def health() -> dict:
 
 
 @app.post("/api/runs", dependencies=[Depends(require_token)])
-async def ingest_run(request: Request) -> dict:
+async def ingest_runs(request: Request) -> dict:
     try:
         payload = await request.json()
     except json.JSONDecodeError:
         raise HTTPException(400, "body must be JSON")
-    if not isinstance(payload, dict):
-        raise HTTPException(422, "body must be a JSON object")
 
-    row = normalize(payload)
-    params = [
-        bigquery.ScalarQueryParameter("source", "STRING", row["source"]),
-        bigquery.ScalarQueryParameter("started_at", "STRING", row["started_at"]),
-        bigquery.ScalarQueryParameter("ended_at", "STRING", row["ended_at"]),
-        bigquery.ScalarQueryParameter("duration_seconds", "FLOAT64", row["duration_seconds"]),
-        bigquery.ScalarQueryParameter("distance_m", "FLOAT64", row["distance_m"]),
-        bigquery.ScalarQueryParameter("active_calories", "FLOAT64", row["active_calories"]),
-        bigquery.ScalarQueryParameter("avg_hr", "FLOAT64", row["avg_hr"]),
-        bigquery.ScalarQueryParameter("max_hr", "FLOAT64", row["max_hr"]),
-        bigquery.ScalarQueryParameter("heart_rates", "STRING", row["heart_rates"]),
-        bigquery.ScalarQueryParameter("raw", "STRING", row["raw"]),
-    ]
-    job = bq.query(MERGE_SQL, job_config=bigquery.QueryJobConfig(query_parameters=params))
+    if isinstance(payload, dict):
+        items = explode(payload)
+    elif isinstance(payload, list):
+        items = [p for p in payload if isinstance(p, dict)]
+    else:
+        raise HTTPException(422, "body must be a JSON object or array")
+
+    rows = []
+    skipped = 0
+    for item in items:
+        row = normalize(item)
+        if row is None:
+            skipped += 1
+        else:
+            rows.append(row)
+
+    if not rows:
+        logger.warning("started_at missing/unparseable. payload=%s",
+                       json.dumps(payload, ensure_ascii=False, default=str)[:2000])
+        raise HTTPException(422, "started_at is required (ISO8601 or unix epoch)")
+
+    rows_json = json.dumps(rows, ensure_ascii=False, default=str)
+    job = bq.query(MERGE_SQL, job_config=bigquery.QueryJobConfig(
+        query_parameters=[bigquery.ScalarQueryParameter("rows", "STRING", rows_json)]
+    ))
     job.result()
-    inserted = job.num_dml_affected_rows == 1  # MERGE は insert/update とも 1 を返すが目安として
-    logger.info("merged run source=%s started_at=%s affected=%s",
-                row["source"], row["started_at"], job.num_dml_affected_rows)
+    logger.info("merged %d run(s), skipped=%d, affected=%s",
+                len(rows), skipped, job.num_dml_affected_rows)
     return {
         "ok": True,
-        "source": row["source"],
-        "started_at": row["started_at"],
-        "distance_m": row["distance_m"],
-        "hr_samples": len(json.loads(row["heart_rates"])),
+        "received": len(items),
+        "merged": len(rows),
+        "skipped": skipped,
         "affected_rows": job.num_dml_affected_rows,
-        "inserted_or_updated": inserted,
+        "latest": {k: rows[0][k] for k in ("source", "started_at", "distance_m")},
     }
 
 
