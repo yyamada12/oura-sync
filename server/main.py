@@ -9,6 +9,7 @@ import hmac
 import json
 import logging
 import os
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -39,13 +40,13 @@ def require_token(cred: HTTPAuthorizationCredentials | None = Depends(bearer)) -
 
 
 def _num(value: Any) -> float | None:
-    """Shortcuts は数値を文字列で送ってくることがあるため寛容に変換する。"""
+    """Shortcuts は "8.02 km" "421 kcal" のような単位付き文字列を送ってくることがある。"""
     if value is None or value == "":
         return None
-    try:
-        return float(str(value).replace(",", ""))
-    except ValueError:
-        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    m = re.search(r"-?\d[\d,]*(?:\.\d+)?", str(value))
+    return float(m.group().replace(",", "")) if m else None
 
 
 def _ts(value: Any) -> datetime | None:
