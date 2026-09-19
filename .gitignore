@@ -8,3 +8,4 @@ service-account.json
 tokens_gas.json
 server/.api_token
 secrets/
+dashboard-site/
