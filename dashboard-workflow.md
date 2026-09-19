@@ -20,7 +20,7 @@
 1. Sites building/hostingスキルを読み、既存Siteをget_siteで確認する。新しいSiteを作らない。公開範囲は所有者本人だけを維持する。
 2. BQの `spherical-depth-263101.running.runs` から `started_at, distance_m, duration_seconds, source_name` を `ORDER BY started_at` で読み取り取得し、一時JSONファイルに保存する。NULLの項目は未知として扱う。
 3. `/usr/bin/python3 scripts/export_dashboard.py --runs /absolute/path/to/runs.json` を実行する。計画ファイルから日付のある日別表を読み、`dashboard-site/dist/data.json` の実績を更新し、計画が変わった場合は保存履歴に追記する。古い `planVersions` を削除しない。
-4. 計画の日別表の1列目は `9/21（月）夜` または `2026/9/21（月）夜` 形式、2列目は距離を含むメニューまたは休養、3列目は注意事項。以後の週は年付き日付を推奨する。同じ日を重複させず、週見出しに開始日を明示する。
+4. 計画の日別表の1列目は `9/21（月）夜` または `2026/9/21（月）夜` 形式、2列目は強度表示（低強度・中強度・高強度、流しは低強度＋流し）と距離を含むメニューまたは休養、3列目は注意事項。以後の週は年付き日付を推奨する。同じ日を重複させず、週見出しに開始日を明示する。
 5. 距離合計と欠測表示を確認し、Sitesのhosting手順で既存Siteへ非公開再デプロイする。Siteの更新はその独立リポジトリのmainへコミットし、Sites専用リモートへpushする。計画・運用文書・スクリプト等の親リポジトリ側の関連変更も、別途origin/mainへコミット・pushする。無関係な既存変更を巻き込まない。
 6. 成功・失敗を区別する。失敗時は前回の公開版を維持し、新しいデータが公開されたと報告しない。
 
