@@ -9,3 +9,7 @@ tokens_gas.json
 server/.api_token
 secrets/
 dashboard-site/
+
+# Local OAuth refresh lock and atomic-write temporary files
+tokens.lock
+.oura-token-*

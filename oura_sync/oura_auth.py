@@ -4,6 +4,9 @@
 - `get_access_token()` : 期限切れなら refresh。refresh token は single-use なので即座に上書き保存
 """
 import json
+import fcntl
+import os
+import tempfile
 import secrets
 import threading
 import time
@@ -25,8 +28,16 @@ def _load_tokens() -> dict | None:
 def _save_tokens(tok: dict) -> None:
     tok = dict(tok)
     tok["expires_at"] = int(time.time()) + int(tok.get("expires_in", 86400)) - 60
-    config.TOKENS_PATH.write_text(json.dumps(tok, indent=2))
-    config.TOKENS_PATH.chmod(0o600)
+    fd, name = tempfile.mkstemp(dir=config.TOKENS_PATH.parent, prefix=".oura-token-")
+    try:
+        with os.fdopen(fd, "w") as stream:
+            json.dump(tok, stream, indent=2)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(name, config.TOKENS_PATH)
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
 
 
 def _token_request(data: dict) -> dict:
@@ -37,7 +48,7 @@ def _token_request(data: dict) -> dict:
     }
     r = requests.post(config.TOKEN_URL, data=data, timeout=30)
     if r.status_code >= 400:
-        raise SystemExit(f"token 取得失敗 {r.status_code}: {r.text}")
+        raise SystemExit(f"token 取得失敗 HTTP {r.status_code}")
     return r.json()
 
 
@@ -104,6 +115,14 @@ def authorize() -> None:
 
 
 def get_access_token() -> str:
+    # Serialize rotating refresh tokens across daily, weekly, and local sync jobs.
+    with config.TOKENS_PATH.with_suffix(".lock").open("a") as lock:
+        os.chmod(lock.name, 0o600)
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        return _get_access_token_locked()
+
+
+def _get_access_token_locked() -> str:
     tok = _load_tokens()
     if not tok:
         raise SystemExit("tokens.json がありません。先に `oura-sync auth` を実行してください")
