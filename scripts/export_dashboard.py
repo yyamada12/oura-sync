@@ -32,6 +32,6 @@ versions = old.get('planVersions', [])
 digest = hashlib.sha256(json.dumps(plans, sort_keys=True).encode()).hexdigest()
 if not versions or versions[-1]['hash'] != digest:
     versions.append({'recordedAt':now,'hash':digest,'plans':plans})
-data = {'updatedAt':now, 'runs':runs, 'plans':plans, 'planVersions':versions, 'raceDate':'2027-02-14'}
+data = {'updatedAt':now, 'runs':runs, 'plans':plans, 'planVersions':versions, 'raceDate':'2027-03-13'}
 out.write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n')
 print('Exported {} runs, {} daily plans, {} plan revisions.'.format(len(runs),len(plans),len(versions)))
