@@ -8,7 +8,6 @@
 import json
 from datetime import datetime, timezone
 
-import google.auth
 import gspread
 
 from . import config
@@ -39,7 +38,7 @@ def make_key(doc: dict, key_fields: tuple) -> str:
 
 class SheetStore:
     def __init__(self):
-        creds, _ = google.auth.default(scopes=SCOPES)
+        creds = config.google_credentials(SCOPES)
         self.gc = gspread.authorize(creds)
         self.book = self.gc.open_by_key(config.require("SPREADSHEET_ID", config.SPREADSHEET_ID))
 
