@@ -22,3 +22,71 @@
 ## 回復データの参照元（2026年9月23日変更）
 
 - 日次通知・週次見直し・その他の回復分析は `oura-api-workflow.md` に従いOura APIを直接参照する。ラン実績は引き続きBQを使う。Ouraの運動一覧でNike Run Clubの記録を置き換えない。
+
+## remote 環境で Oura API を叩く
+
+Oura の refresh token は single-use (使うたびにローテーション) のため、remote 環境では
+トークンを `tokens.json` ではなく **GCP Secret Manager** (`oura-data-yy` プロジェクト) に保存する。
+環境変数 `OURA_TOKEN_SECRET` があればコードは自動的に Secret Manager を使う
+(`oura_sync/secret_store.py`)。refresh のたびに新バージョンを追加し、旧バージョンは destroy する。
+
+### 必要な環境変数
+
+| 変数 | 値 |
+|---|---|
+| `OURA_CLIENT_ID` | Oura OAuth アプリの Client ID |
+| `OURA_CLIENT_SECRET` | Oura OAuth アプリの Client Secret |
+| `OURA_TOKEN_SECRET` | `projects/oura-data-yy/secrets/oura-remote-tokens` |
+| `GOOGLE_SERVICE_ACCOUNT_KEY` | ローカルの `service-account.json` の中身 (生 JSON か base64)。SA は `oura-sync@spherical-depth-263101.iam.gserviceaccount.com` |
+| `SPREADSHEET_ID` | (Sheets に書く場合のみ) 書き込み先スプレッドシート ID |
+
+### 使い方
+
+環境変数が揃っていれば、ローカルと同じコマンドがそのまま動く。
+
+```sh
+uv sync
+# 回復データを読むだけ (Sheets/BQ には書かない。oura-api-workflow.md 参照)
+uv run python scripts/read_oura_recovery.py --days 7
+# Sheets に同期 (SPREADSHEET_ID が必要。シートは SA に共有済み)
+uv run oura-sync sync --days 7
+```
+
+### 注意
+
+- **同時に複数の remote セッションで実行しない。** `tokens.lock` はマシン内の排他にしかならない。access token の期限切れ時に 2 プロセスが同時に refresh すると、
+  片方の refresh token が失効済みになりチェーンが切れる (再認可が必要になる)
+- `tokens.json` や GAS のスクリプト プロパティの refresh token を remote で使わないこと。
+  使った瞬間にそちらのチェーンが失効し、毎朝の GAS 同期が止まる
+- トークン・鍵の値をログやコミットに出力しないこと
+- `oura-sync auth` はブラウザでの認可が必要なので remote では実行できない。チェーンが切れたら
+  人間に下記「再認可」を依頼する
+
+### 初回セットアップ (2026-10-01 実施済み)
+
+Sheets 書き込み用の既存 SA (`service-account.json`) をそのまま使い、
+`oura-data-yy` のシークレットにだけ権限を付けている (プロジェクト横断)。
+
+```sh
+P=oura-data-yy
+SA=oura-sync@spherical-depth-263101.iam.gserviceaccount.com
+gcloud services enable secretmanager.googleapis.com --project $P
+gcloud secrets create oura-remote-tokens --replication-policy=automatic --project $P
+for role in roles/secretmanager.secretAccessor roles/secretmanager.secretVersionManager; do
+  gcloud secrets add-iam-policy-binding oura-remote-tokens --project $P \
+    --member serviceAccount:$SA --role $role --condition=None
+done
+```
+
+続けて「再認可」を実行してトークンを Secret Manager に入れ、
+`service-account.json` の中身を remote 環境の `GOOGLE_SERVICE_ACCOUNT_KEY` に設定する。
+
+### 再認可 (チェーンが切れたとき / 初回)
+
+ローカルで remote 専用の新しいチェーンを発行し、Secret Manager に直接保存する。
+
+```sh
+OURA_TOKEN_SECRET=projects/oura-data-yy/secrets/oura-remote-tokens \
+GOOGLE_SERVICE_ACCOUNT_KEY="$(cat service-account.json)" \
+uv run oura-sync auth
+```

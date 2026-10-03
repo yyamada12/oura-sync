@@ -2,6 +2,7 @@
 
 - `authorize()` : ブラウザで認可 → ローカル HTTP サーバーで code を受け取り tokens.json に保存
 - `get_access_token()` : 期限切れなら refresh。refresh token は single-use なので即座に上書き保存
+- 環境変数 OURA_TOKEN_SECRET があれば tokens.json の代わりに Secret Manager を使う (remote 環境向け)
 """
 import json
 import fcntl
@@ -16,18 +17,30 @@ from urllib.parse import parse_qs, urlencode, urlparse
 
 import requests
 
-from . import config
+from . import config, secret_store
+
+
+_cache: dict | None = None  # Secret Manager へのアクセスをリクエストごとに発生させないため
 
 
 def _load_tokens() -> dict | None:
-    if config.TOKENS_PATH.exists():
-        return json.loads(config.TOKENS_PATH.read_text())
-    return None
+    global _cache
+    if _cache is None:
+        if config.OURA_TOKEN_SECRET:
+            _cache = secret_store.load(config.OURA_TOKEN_SECRET)
+        elif config.TOKENS_PATH.exists():
+            _cache = json.loads(config.TOKENS_PATH.read_text())
+    return _cache
 
 
 def _save_tokens(tok: dict) -> None:
+    global _cache
     tok = dict(tok)
     tok["expires_at"] = int(time.time()) + int(tok.get("expires_in", 86400)) - 60
+    _cache = tok
+    if config.OURA_TOKEN_SECRET:
+        secret_store.save(config.OURA_TOKEN_SECRET, tok)
+        return
     fd, name = tempfile.mkstemp(dir=config.TOKENS_PATH.parent, prefix=".oura-token-")
     try:
         with os.fdopen(fd, "w") as stream:
@@ -111,7 +124,8 @@ def authorize() -> None:
         }
     )
     _save_tokens(tok)
-    print(f"tokens.json に保存しました (scope: {tok.get('scope')})")
+    where = config.OURA_TOKEN_SECRET or "tokens.json"
+    print(f"{where} に保存しました (scope: {tok.get('scope')})")
 
 
 def get_access_token() -> str:
@@ -123,9 +137,15 @@ def get_access_token() -> str:
 
 
 def _get_access_token_locked() -> str:
+    global _cache
     tok = _load_tokens()
+    if tok and time.time() >= tok.get("expires_at", 0):
+        # キャッシュが古く、他プロセスが既に refresh 済みかもしれないので読み直す
+        _cache = None
+        tok = _load_tokens()
     if not tok:
-        raise SystemExit("tokens.json がありません。先に `oura-sync auth` を実行してください")
+        where = config.OURA_TOKEN_SECRET or "tokens.json"
+        raise SystemExit(f"{where} にトークンがありません。先に `oura-sync auth` を実行してください")
     if time.time() < tok.get("expires_at", 0):
         return tok["access_token"]
     new = _token_request({"grant_type": "refresh_token", "refresh_token": tok["refresh_token"]})
