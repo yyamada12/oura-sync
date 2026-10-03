@@ -10,6 +10,8 @@
 /Users/01027782/.anyenv/envs/pyenv/versions/3.12.4/bin/python3 /Users/01027782/work/run/scripts/read_oura_recovery.py --days 28
 ```
 
+- 2026/10/4のローカル確認：上記Python単体では追加された `google.auth` が見つからない場合がある。既存 `.venv` のライブラリは利用できるため、同じコマンドに `PYTHONPATH=/Users/01027782/work/run/.venv/lib/python3.12/site-packages` を付けて再実行すれば取得可能（同日確認済み）。`.venv/bin/python` 自体は旧ユーザーパスの共有ライブラリを参照して起動できないため、指定済みのPython本体を使う。認証系列・排他・同期先は変更しない。
+
 - `daily_sleep`、`daily_readiness`、`sleep` をページング込みでGETし、分析に必要な項目だけJSONへ出力する。Sheets/BQへの同期書き込みは行わない。
 - `fetched_at` は取得日時、各レコードの `day` と睡眠区間がデータの対象日。昨夜の睡眠が今日分か確認する。主睡眠と昼寝・短い睡眠を区別し、直近14〜28日と比較する。
 - 欠測・部分取得失敗は明記する。古いレコードを当日分に扱わず、数値を補作しない。API失敗時は計画とBQ実績から暫定判断し、Sheetsの古いデータへ無言で切り替えない。
