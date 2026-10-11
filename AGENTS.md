@@ -62,6 +62,33 @@ uv run oura-sync sync --days 7
 - `oura-sync auth` はブラウザでの認可が必要なので remote では実行できない。チェーンが切れたら
   人間に下記「再認可」を依頼する
 
+### remote 環境で BQ のラン実績を読む
+
+同じ SA で `spherical-depth-263101.running` データセット (`runs` / `runs_v`) を読み取りできる。
+書き込み権限は無い。`bq` CLI が無い環境でも、依存済みの google-auth で REST を叩ける。
+
+```sh
+uv run python - <<'EOF'
+import base64, json, os
+from google.auth.transport.requests import AuthorizedSession
+from google.oauth2 import service_account
+raw = os.environ["GOOGLE_SERVICE_ACCOUNT_KEY"].strip()
+info = json.loads(raw if raw.startswith("{") else base64.b64decode(raw))
+cred = service_account.Credentials.from_service_account_info(
+    info, scopes=["https://www.googleapis.com/auth/cloud-platform"])
+q = """SELECT started_at, distance_m, duration_seconds, source_name
+FROM `spherical-depth-263101.running.runs`
+WHERE started_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 28 DAY)
+ORDER BY started_at"""
+r = AuthorizedSession(cred).post(
+    "https://bigquery.googleapis.com/bigquery/v2/projects/spherical-depth-263101/queries",
+    json={"query": q, "useLegacySql": False}, timeout=60)
+r.raise_for_status()
+for row in r.json().get("rows", []):
+    print([c["v"] for c in row["f"]])  # started_at は UNIX 秒 (UTC)。Asia/Tokyo に直して扱う
+EOF
+```
+
 ### 初回セットアップ (2026-10-01 実施済み)
 
 Sheets 書き込み用の既存 SA (`service-account.json`) をそのまま使い、
@@ -76,6 +103,14 @@ for role in roles/secretmanager.secretAccessor roles/secretmanager.secretVersion
   gcloud secrets add-iam-policy-binding oura-remote-tokens --project $P \
     --member serviceAccount:$SA --role $role --condition=None
 done
+```
+
+BQ のラン実績の読み取り権限 (2026-10-11 付与):
+
+```sh
+gcloud projects add-iam-policy-binding spherical-depth-263101 \
+  --member serviceAccount:$SA --role roles/bigquery.jobUser --condition=None
+# running データセットの ACL に READER として SA を追加 (bq show → access に追記 → bq update --source)
 ```
 
 続けて「再認可」を実行してトークンを Secret Manager に入れ、
