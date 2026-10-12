@@ -155,8 +155,10 @@ for sa in nrc-ingest@spherical-depth-263101.iam.gserviceaccount.com 964507190351
   gcloud iam service-accounts add-iam-policy-binding $sa --project spherical-depth-263101 \
     --member serviceAccount:$SA --role roles/iam.serviceAccountUser
 done
-gcloud storage buckets add-iam-policy-binding gs://run-sources-spherical-depth-263101-asia-northeast1 \
-  --member serviceAccount:$SA --role roles/storage.objectAdmin
+for role in roles/storage.objectAdmin roles/storage.bucketViewer; do  # bucketViewer: storage.buckets.get 用
+  gcloud storage buckets add-iam-policy-binding gs://run-sources-spherical-depth-263101-asia-northeast1 \
+    --member serviceAccount:$SA --role $role
+done
 gcloud artifacts repositories add-iam-policy-binding cloud-run-source-deploy --location asia-northeast1 \
   --project spherical-depth-263101 --member serviceAccount:$SA --role roles/artifactregistry.writer
 for role in roles/cloudbuild.builds.editor roles/serviceusage.serviceUsageConsumer; do
