@@ -32,6 +32,54 @@ DATASET = os.environ.get("BQ_DATASET", "running")
 TABLE = f"{PROJECT_ID}.{DATASET}.runs"
 VIEW = f"{PROJECT_ID}.{DATASET}.runs_v"
 API_TOKEN = os.environ.get("API_TOKEN", "")
+LOG_REQUEST_BODY = os.environ.get("LOG_REQUEST_BODY", "false").lower() == "true"
+BODY_LOG_MAX_BYTES = 64 * 1024
+
+
+def log_request_body(payload: Any) -> None:
+    """Log authenticated JSON before splitting; omit oversized/deep payloads entirely."""
+    if not LOG_REQUEST_BODY:
+        return
+    sensitive = {"authorization", "proxyauthorization", "cookie", "setcookie",
+                 "password", "passwd", "token", "accesstoken", "refreshtoken",
+                 "idtoken", "apitoken", "apikey", "secret", "clientsecret",
+                 "privatekey", "googleserviceaccountkey", "credentials",
+                 "serviceaccountkey", "bearer", "bearertoken", "secretkey",
+                 "awsaccesskeyid", "awssecretaccesskey", "sessiontoken",
+                 "signingkey", "encryptionkey", "credential"}
+    remaining = 4096
+
+    def redact(value: Any, depth: int = 0) -> Any:
+        nonlocal remaining
+        remaining -= 1
+        if remaining < 0 or depth > 32:
+            raise ValueError("body structure limit")
+        if isinstance(value, dict):
+            return {redact(k, depth + 1): (
+                "[REDACTED]" if re.sub(r"[^a-z0-9]", "", k.lower()) in sensitive
+                else redact(v, depth + 1)) for k, v in value.items()}
+        if isinstance(value, list):
+            return [redact(v, depth + 1) for v in value]
+        if isinstance(value, str):
+            if len(value) > BODY_LOG_MAX_BYTES:
+                raise ValueError("body string limit")
+            return value.replace(API_TOKEN, "[REDACTED]") if API_TOKEN else value
+        return value
+
+    entry = {"severity": "INFO", "event": "runs_request_body",
+             "body_complete": True, "credential_redaction_applied": True}
+    try:
+        entry["body"] = redact(payload)
+        line = json.dumps(entry, ensure_ascii=True, separators=(",", ":"))
+        if len(line.encode("utf-8")) > BODY_LOG_MAX_BYTES:
+            raise ValueError("body byte limit")
+    except (ValueError, RecursionError):
+        line = json.dumps({"severity": "INFO", "event": "runs_request_body",
+                           "body_complete": False, "body_omitted": True,
+                           "reason": "body_log_size_or_structure_limit",
+                           "max_log_bytes": BODY_LOG_MAX_BYTES})
+    # Bare one-line JSON on stdout is recognized by Cloud Logging as jsonPayload.
+    print(line, flush=True)
 
 app = FastAPI(title="nrc-ingest", docs_url=None, redoc_url=None)
 bq = bigquery.Client(project=PROJECT_ID)
@@ -224,6 +272,8 @@ async def ingest_runs(request: Request) -> dict:
     except json.JSONDecodeError:
         raise HTTPException(400, "body must be JSON")
 
+    log_request_body(payload)
+
     if isinstance(payload, dict):
         items = explode(payload)
     elif isinstance(payload, list):
@@ -241,8 +291,7 @@ async def ingest_runs(request: Request) -> dict:
             rows.append(row)
 
     if not rows:
-        logger.warning("started_at missing/unparseable. payload=%s",
-                       json.dumps(payload, ensure_ascii=False, default=str)[:2000])
+        logger.warning("started_at missing/unparseable; received=%d", len(items))
         raise HTTPException(422, "started_at is required (ISO8601 or unix epoch)")
 
     rows_json = json.dumps(rows, ensure_ascii=False, default=str)
