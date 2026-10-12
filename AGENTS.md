@@ -161,7 +161,8 @@ for role in roles/storage.objectAdmin roles/storage.bucketViewer; do  # bucketVi
 done
 gcloud artifacts repositories add-iam-policy-binding cloud-run-source-deploy --location asia-northeast1 \
   --project spherical-depth-263101 --member serviceAccount:$SA --role roles/artifactregistry.writer
-for role in roles/cloudbuild.builds.editor roles/serviceusage.serviceUsageConsumer; do
+# storage.bucketViewer はプロジェクト単位でも必要 (バケット単位だけでは deploy が通らなかった)
+for role in roles/cloudbuild.builds.editor roles/serviceusage.serviceUsageConsumer roles/storage.bucketViewer; do
   gcloud projects add-iam-policy-binding spherical-depth-263101 --member serviceAccount:$SA --role $role --condition=None
 done
 ```
