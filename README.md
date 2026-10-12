@@ -22,6 +22,19 @@ Oura Ring (API v2) のデータを Google Sheets / BigQuery に取り込むス�
   リダイレクト URI は `https://chatgpt.com/connector_platform_oauth_redirect`、
   テストユーザーに yacropolisy@gmail.com を登録済み
 
+### BigQuery 閲覧用サービスアカウント (読み取り専用)
+
+- `bq-reader@spherical-depth-263101.iam.gserviceaccount.com` (作成 2026-09-18)
+- 両プロジェクトに `roles/bigquery.dataViewer` + `roles/bigquery.jobUser` を付与済み
+  (`spherical-depth-263101` の `running`、`oura-data-yy` の `oura` を横断で読める)
+- `jobUser` を両方に付けているのは、クエリの課金プロジェクトをどちらに向けても動かすため
+- 鍵 JSON は `secrets/bq-reader.json` (git 管理外)。使うときは
+  `GOOGLE_APPLICATION_CREDENTIALS=./secrets/bq-reader.json`
+- 書き込みは不可 (`bigquery.tables.create` は 403)。取り込み系は従来どおり
+  `oura-sync@` / `nrc-ingest@` を使う
+- 鍵をローテーション/失効する場合:
+  `gcloud iam service-accounts keys list --iam-account bq-reader@spherical-depth-263101.iam.gserviceaccount.com`
+
 ## セットアップ
 
 ### 1. Oura アプリ登録
