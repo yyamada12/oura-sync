@@ -39,6 +39,7 @@ Oura の refresh token は single-use (使うたびにローテーション) の
 | `OURA_TOKEN_SECRET` | `projects/oura-data-yy/secrets/oura-remote-tokens` |
 | `GOOGLE_SERVICE_ACCOUNT_KEY` | ローカルの `service-account.json` の中身 (生 JSON か base64)。SA は `oura-sync@spherical-depth-263101.iam.gserviceaccount.com` |
 | `SPREADSHEET_ID` | (Sheets に書く場合のみ) 書き込み先スプレッドシート ID |
+| `LINE_TOKEN_SECRET` | (LINE 通知を送る場合のみ) `projects/oura-data-yy/secrets/line-notify-token` |
 
 ### 使い方
 
@@ -61,6 +62,36 @@ uv run oura-sync sync --days 7
 - トークン・鍵の値をログやコミットに出力しないこと
 - `oura-sync auth` はブラウザでの認可が必要なので remote では実行できない。チェーンが切れたら
   人間に下記「再認可」を依頼する
+
+### remote 環境から LINE 通知を送る
+
+`LINE_TOKEN_SECRET` を設定すると、`scripts/send_line_plan.py` は
+`secrets/line-notify.json` ではなく Secret Manager からトークンを読む。
+同じ SA (`GOOGLE_SERVICE_ACCOUNT_KEY`) の権限だけで送信でき、鍵ファイルは不要。
+
+```sh
+LINE_TOKEN_SECRET=projects/oura-data-yy/secrets/line-notify-token \
+GOOGLE_SERVICE_ACCOUNT_KEY="$(cat service-account.json)" \
+uv run python scripts/send_line_plan.py --key run-plan-2026-10-12 <<'EOF'
+本文
+EOF
+```
+
+- シークレットへの付与は `roles/secretmanager.secretAccessor` のみ (読み取り専用)。
+  LINE のチャネルアクセストークンはローテーションしないので、Oura と違い versionManager は不要
+- 環境変数が無ければ従来どおりローカル鍵を読む。`/usr/bin/python3` (stdlib のみ) でも動く
+- 運用ルール (本文の長さ、休養日の無通知、冪等キー) は `notification-workflow.md` 参照
+
+#### 初回セットアップ (2026-10-12 実施済み)
+
+```sh
+P=oura-data-yy
+SA=oura-sync@spherical-depth-263101.iam.gserviceaccount.com
+gcloud secrets create line-notify-token --replication-policy=automatic --project $P
+gcloud secrets versions add line-notify-token --project $P --data-file=secrets/line-notify.json
+gcloud secrets add-iam-policy-binding line-notify-token --project $P \
+  --member serviceAccount:$SA --role roles/secretmanager.secretAccessor --condition=None
+```
 
 ### remote 環境で BQ のラン実績を読む
 

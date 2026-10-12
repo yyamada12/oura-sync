@@ -22,6 +22,9 @@ SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID", "")
 OURA_TOKEN_SECRET = os.environ.get("OURA_TOKEN_SECRET", "")
 # remote 環境用: サービスアカウント鍵 JSON の中身 (生 JSON または base64)。未指定なら ADC
 GOOGLE_SERVICE_ACCOUNT_KEY = os.environ.get("GOOGLE_SERVICE_ACCOUNT_KEY", "")
+# LINE 通知のトークン置き場。指定すると secrets/line-notify.json ではなく Secret Manager を使う
+# 形式: projects/<project>/secrets/<name>
+LINE_TOKEN_SECRET = os.environ.get("LINE_TOKEN_SECRET", "")
 
 # サービスアカウント鍵の相対パスはプロジェクトルート基準に解決する (launchd 等で cwd が違っても動くように)
 _gac = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")

@@ -1,6 +1,6 @@
 # ランニング通知の運用
 
-最終更新：2026年9月23日。日付・時刻はAsia/Tokyo。
+最終更新：2026年10月12日。日付・時刻はAsia/Tokyo。
 
 ## 確定している運用
 
@@ -29,12 +29,16 @@
 
 ## LINE送信
 
-- 送信スクリプト：`scripts/send_line_plan.py`。認証情報はGit対象外の `secrets/line-notify.json` を参照する。
-- `/usr/bin/python3 scripts/send_line_plan.py --key run-plan-YYYY-MM-DD` に本文を標準入力で渡す。日付は日本時間。同日の再試行では同じキーを使い、重複送信を防ぐ。
+- 送信スクリプト：`scripts/send_line_plan.py`。本文は標準入力で渡し、`--key run-plan-YYYY-MM-DD` を付ける。日付は日本時間。同日の再試行では同じキーを使い、重複送信を防ぐ。
+- 認証情報の取得元は2通り。`LINE_TOKEN_SECRET` があればGCP Secret Managerから読み、無ければGit対象外の `secrets/line-notify.json` を読む（2026年10月12日に追加）。
+  - remote環境（SA権限のみ）：`LINE_TOKEN_SECRET=projects/oura-data-yy/secrets/line-notify-token` と `GOOGLE_SERVICE_ACCOUNT_KEY` を設定し、`uv run python scripts/send_line_plan.py --key ...` で送る。ローカルに鍵ファイルを置く必要はない。
+  - ローカル：従来どおり `/usr/bin/python3 scripts/send_line_plan.py --key ...`。stdlibのみで動き、`secrets/line-notify.json` を使う。
+- SAは `oura-sync@spherical-depth-263101.iam.gserviceaccount.com`。シークレットには `roles/secretmanager.secretAccessor` のみ付与（読み取り専用。新バージョン追加は403）。LINEのチャネルアクセストークンはOuraのrefresh tokenと違いローテーションしないため、書き込み権限は不要。
+- トークンを差し替えるときは `gcloud secrets versions add line-notify-token --project oura-data-yy --data-file=-` で新バージョンを追加する。文書やGitに値を書かない。
 - 2026年9月19日にテスト送信し、ユーザーがLINEへの到達を確認済み。その後、定期実行のプロンプトもLINE送信を含む形に変更済み。
 - APIのHTTP 200は受付成功であり、端末到達の確認ではない。失敗時は送信済みと報告せず、このタスクで簡潔に知らせる。
 - LINEからChatGPTアプリの特定のリモート会話を開くリンクは未確認のため、付けていない。
-- ローカル実行のため、実行時にMacとアプリが稼働し、必要なデータへのアクセスが可能であることが前提。
+- ローカル実行する場合は、実行時にMacとアプリが稼働し、必要なデータへのアクセスが可能であることが前提。remote環境ではSA権限だけで送信できる。
 
 実際の自動化設定はアプリが管理する。この文書の編集だけではスケジュールや送信動作は変わらない。設定を変更するときは自動化ツールで変更し、この文書も整合させる。
 
