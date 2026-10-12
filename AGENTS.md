@@ -144,6 +144,28 @@ gcloud projects add-iam-policy-binding spherical-depth-263101 \
 # running データセットの ACL に READER として SA を追加 (bq show → access に追記 → bq update --source)
 ```
 
+Cloud Run `nrc-ingest` (ヘルスケア → ショートカットの取り込み API) のデプロイ権限 (2026-10-12 付与)。
+README の `gcloud run deploy nrc-ingest --source server ...` をこの SA で実行できる:
+
+```sh
+gcloud run services add-iam-policy-binding nrc-ingest --region asia-northeast1 --project spherical-depth-263101 \
+  --member serviceAccount:$SA --role roles/run.admin   # --allow-unauthenticated の IAM 設定のため admin
+# 実行 SA と Cloud Build のビルド SA (デフォルト compute SA) への actAs
+for sa in nrc-ingest@spherical-depth-263101.iam.gserviceaccount.com 964507190351-compute@developer.gserviceaccount.com; do
+  gcloud iam service-accounts add-iam-policy-binding $sa --project spherical-depth-263101 \
+    --member serviceAccount:$SA --role roles/iam.serviceAccountUser
+done
+gcloud storage buckets add-iam-policy-binding gs://run-sources-spherical-depth-263101-asia-northeast1 \
+  --member serviceAccount:$SA --role roles/storage.objectAdmin
+gcloud artifacts repositories add-iam-policy-binding cloud-run-source-deploy --location asia-northeast1 \
+  --project spherical-depth-263101 --member serviceAccount:$SA --role roles/artifactregistry.writer
+for role in roles/cloudbuild.builds.editor roles/serviceusage.serviceUsageConsumer; do
+  gcloud projects add-iam-policy-binding spherical-depth-263101 --member serviceAccount:$SA --role $role --condition=None
+done
+```
+
+デプロイ時は `API_TOKEN` (`server/.api_token`) の値も必要。remote 環境では別途渡すこと (コミットしない)。
+
 続けて「再認可」を実行してトークンを Secret Manager に入れ、
 `service-account.json` の中身を remote 環境の `GOOGLE_SERVICE_ACCOUNT_KEY` に設定する。
 
