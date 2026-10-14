@@ -1,5 +1,9 @@
 # oura-sync
 
+## ラン計画・通知の現行運用
+
+[運用方針](operations-policy.md)、[現在の計画と変更履歴](training-plan-2027-02-14.md)、[LINE通知](notification-workflow.md)、[本人限定ダッシュボード](dashboard-workflow.md)を参照する。運用の正本はdotが管理する非公開計画・永続台帳。公開文書の更新だけではスケジュールやサービスの設定は変わらない。
+
 Oura Ring (API v2) のデータを Google Sheets / BigQuery に取り込むスクリプト。
 - daily 系・sleep・workout など低頻度データ → Google Sheets (エンドポイントごとに 1 タブ、キーで冪等 upsert)
 - heartrate / ring_battery_level など高頻度データ → BigQuery `oura-data-yy.oura`
